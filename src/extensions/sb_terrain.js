@@ -59,10 +59,10 @@ class Perlin2D {
         for (let i = 0; i < 512; i++) this.p[i] = perm[i & 255];
     }
     fade (t) {
-        return t * t * t * (t * (t * 6 - 15) + 10);
+        return (t * t * t) * ((t * ((t * 6) - 15)) + 10);
     }
     lerp (a, b, t) {
-        return a + t * (b - a);
+        return a + (t * (b - a));
     }
     grad (hash, x, y) {
         // 8 unit-length gradient directions
@@ -158,9 +158,9 @@ function parseColor (value) {
 
 function mix (a, b, t) {
     return [
-        Math.round(a[0] + (b[0] - a[0]) * t),
-        Math.round(a[1] + (b[1] - a[1]) * t),
-        Math.round(a[2] + (b[2] - a[2]) * t)
+        Math.round(a[0] + ((b[0] - a[0]) * t)),
+        Math.round(a[1] + ((b[1] - a[1]) * t)),
+        Math.round(a[2] + ((b[2] - a[2]) * t))
     ];
 }
 
@@ -264,8 +264,8 @@ class SBTerrain {
                 const qx = fbm(warp, nx, ny, 3);
                 const qy = fbm(warp, nx + 5.2, ny + 1.3, 3);
                 const w = this._warpStrength;
-                const h = fbm(base, nx + w * qx, ny + w * qy, octaves);
-                data[y * size + x] = h;
+                const h = fbm(base, nx + (w * qx), ny + (w * qy), octaves);
+                data[(y * size) + x] = h;
             }
         }
         // Normalize to [0, 1].
@@ -299,20 +299,20 @@ class SBTerrain {
         const y0 = Math.floor(y);
         const fx = x - x0;
         const fy = y - y0;
-        const i00 = data[y0 * size + x0];
-        const i10 = data[y0 * size + x0 + 1];
-        const i01 = data[(y0 + 1) * size + x0];
-        const i11 = data[(y0 + 1) * size + x0 + 1];
-        const top = i00 + (i10 - i00) * fx;
-        const bottom = i01 + (i11 - i01) * fx;
-        return top + (bottom - top) * fy;
+        const i00 = data[(y0 * size) + x0];
+        const i10 = data[((y0 * size) + x0) + 1];
+        const i01 = data[((y0 + 1) * size) + x0];
+        const i11 = data[(((y0 + 1) * size) + x0) + 1];
+        const top = i00 + ((i10 - i00) * fx);
+        const bottom = i01 + ((i11 - i01) * fx);
+        return top + ((bottom - top) * fy);
     }
 
     _sampleNearest (x, y) {
         const size = this._size;
         const xi = clamp(Math.round(x), 0, size - 1);
         const yi = clamp(Math.round(y), 0, size - 1);
-        return this._height[yi * size + xi];
+        return this._height[(yi * size) + xi];
     }
 
     /**
@@ -355,8 +355,8 @@ class SBTerrain {
                 }
             }
             this._lut[i * 3] = rgb[0];
-            this._lut[i * 3 + 1] = rgb[1];
-            this._lut[i * 3 + 2] = rgb[2];
+            this._lut[(i * 3) + 1] = rgb[1];
+            this._lut[(i * 3) + 2] = rgb[2];
         }
     }
 
@@ -368,7 +368,7 @@ class SBTerrain {
         const renderer = this.runtime && this.runtime.renderer;
         if (!renderer || typeof document === 'undefined') return false;
         try {
-            if (this._skinId === null || this._skinId === undefined) {
+            if (this._skinId === null || typeof this._skinId === 'undefined') {
                 this._imageData = new ImageData(STAGE_W, STAGE_H);
                 this._skinId = renderer.createBitmapSkin(this._imageData, 1);
                 // Background group: above the stage backdrop, below sprites.
@@ -394,11 +394,11 @@ class SBTerrain {
         let p = 0;
         for (let py = 0; py < STAGE_H; py++) {
             // Screen row py=0 is the top; world y points up.
-            const wy = cy + (STAGE_H / 2 - py - 0.5) / ppt;
+            const wy = cy + (((STAGE_H / 2) - py - 0.5) / ppt);
             for (let px = 0; px < STAGE_W; px++) {
-                const wx = cx + (px - STAGE_W / 2 + 0.5) / ppt;
-                let h = this._sampleBilinear(wx, wy);
-                let li = (h * (LUT_SIZE - 1)) | 0;
+                const wx = cx + ((px - (STAGE_W / 2) + 0.5) / ppt);
+                const h = this._sampleBilinear(wx, wy);
+                let li = ((h * (LUT_SIZE - 1)) | 0);
                 if (li < 0) li = 0;
                 else if (li >= LUT_SIZE) li = LUT_SIZE - 1;
                 li *= 3;
@@ -855,7 +855,10 @@ class SBTerrain {
 
     terrainHeight (args) {
         if (!this._height) return 0;
-        return this._sampleBilinear(Cast.toNumber(args.X), Cast.toNumber(args.Y));
+        const x = Cast.toNumber(args.X);
+        const y = Cast.toNumber(args.Y);
+        if (x < 0 || y < 0 || x > this._size - 1 || y > this._size - 1) return 0;
+        return this._sampleBilinear(x, y);
     }
 
     tileAt (args) {
@@ -946,12 +949,12 @@ class SBTerrain {
 
     worldXOfScreen (args) {
         const sx = Cast.toNumber(args.SX);
-        return this._camX + sx / this._pixelsPerTile();
+        return this._camX + (sx / this._pixelsPerTile());
     }
 
     worldYOfScreen (args) {
         const sy = Cast.toNumber(args.SY);
-        return this._camY + sy / this._pixelsPerTile();
+        return this._camY + (sy / this._pixelsPerTile());
     }
 
     showTerrain (args) {
