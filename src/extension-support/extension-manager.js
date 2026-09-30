@@ -238,6 +238,10 @@ const defaultBuiltinExtensions = {
     // iyg: erm a crep, erm a werdohhhh
     // iygPerlin:
     iygPerlin: () => require('../extensions/iyg_perlin_noise'),
+
+    // sb: terrain world (heightmap / camera / noise blocks)
+    // sbTerrain:
+    sbTerrain: () => require('../extensions/sb_terrain'),
     // fr: waw 3d physics!!
     // fr3d:
     fr3d: () => require('../extensions/fr_3d')
