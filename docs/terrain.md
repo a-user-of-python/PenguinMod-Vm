@@ -22,30 +22,29 @@ forever
     if <key [left arrow] pressed?> then change camera x by [-4]
     if <key [up arrow] pressed?> then change camera y by [4]
     if <key [down arrow] pressed?> then change camera y by [-4]
-    if <(terrain at world x (camera x) y (camera y)) = [ocean]> then
+    if <(tile type at x (camera x) y (camera y)) = [ocean]> then
         ... push the player back / play a splash sound
-```
-
-Put the player sprite at the **screen** position of its world position:
-
-```
-go to x: (world x to screen x (player world x)) y: (world y to screen y (player world y))
 ```
 
 ## Concepts
 
-- **World**: a stored heightmap of `size` x `size` tiles (512, 1024, or 2048).
-  Values are normalized to 0 (lowest) .. 1 (highest).
-- **Seed**: the same seed + size + octaves always rebuilds the identical world,
-  so worlds are shareable and reproducible. `regenerate terrain` rebuilds it
-  without changing your camera or zoom.
+- **World**: a stored heightmap of `size` x `size` tiles (64 .. 5120).
+  Values are normalized to 0 (lowest) .. 1 (highest). Sizes above 2048 use a
+  faster generator and build asynchronously with a progress reporter.
+- **Infinite world**: outside the stored map, terrain is sampled on demand
+  from the same seeded noise, so there is effectively no edge — you can keep
+  walking forever. `terrain generation progress` reports 0..1 while building.
+- **Seed**: the same seed + size + octaves always rebuilds the identical
+  world, so worlds are shareable and reproducible. Worlds of size 2048 and
+  below are bit-identical to the first release.
 - **Camera**: the world point at the center of the stage. Move the camera to
   explore; the terrain re-renders automatically.
 - **Zoom**: how many world tiles fit across the 480-pixel stage. Small zoom =
   close-up, large zoom = whole map.
-- **Classification**: height below `sea level` is ocean, below
-  `sea level + beach height` is beach, the rest is land. Adjust the two
-  thresholds live and the map re-renders.
+- **Biomes**: heights are classified into five tiers — `ocean`, `beach`,
+  `grass`, `mountain`, `snowy peak` (highest). Sandy beach clearings also
+  appear as patches fully surrounded by grass. Thresholds are enforced in
+  order: sea < beach top <= mountain line <= snow line.
 
 ## Block reference
 
@@ -55,20 +54,45 @@ go to x: (world x to screen x (player world x)) y: (world y to screen y (player 
 - `ridged noise x, y, octaves` — sharp mountain-ridge style noise (0..1).
 
 **World**:
-- `generate terrain seed, size, octaves` — builds the heightmap (may take a
-  moment at 2048; it runs synchronously).
-- `regenerate terrain` — rebuilds the identical world from the current seed.
-- `height at world x, y` — bilinear-sampled height, 0..1 (0 outside the map).
-- `terrain at world x, y` — `ocean`, `beach`, or `land`.
-- `is land / is ocean / is beach at world x, y` — 1 or 0.
+- `generate terrain seed, size, octaves` — builds the heightmap. Sizes 64..2048
+  build synchronously and are bit-identical to the first release; 4096/5120
+  build in the background (the block waits until done).
+- `terrain generation progress` — 0..1 while a huge world builds.
+- `height at world x, y` — bilinear-sampled height, 0..1, at any coordinate
+  (outside the stored map it is sampled from the seeded noise — no edge).
+- `tile type at x, y` — `ocean`, `beach`, `grass`, `mountain`, or `snow`.
+- `terrain zone at x, y` — `deep ocean`, `ocean`, `shallows`, `beach`,
+  `grass`, `mountain`, or `snowy peak`.
+- `water depth at x, y` / `height above sea at x, y` — 0 when not applicable.
 - `set sea level`, `set beach height`, `sea level`, `beach height`.
-- `set ocean level [OCEAN] and beach height [BEACH]` — set both thresholds in
-  one block (land is everything above the beach).
-- `set ocean/beach/land color`, `terrain seed`, `world size`.
+- `set ocean level [OCEAN] and beach height [BEACH]` — set both in one block.
+- `set mountain line [M] and snow line [S]` — heights above M are mountains,
+  above S are snowy (ordering is enforced automatically).
+- `set [ocean/beach/grass/mountain/snow] color to`, `terrain seed`,
+  `world size`.
+
+**Sprites in the world** (the map can stay fixed while sprites move):
+- `anchor [SPRITE] to world` / `unanchor [SPRITE]` / `is [SPRITE] anchored?` —
+  anchored sprites keep their world position when the camera moves.
+- `move [SPRITE] in world by dx, dy` — moves the sprite across the world
+  without moving the camera or map.
+- `set [SPRITE] world position`, `world x/y of [SPRITE]`.
+- `point [SPRITE] towards world x, y`.
+- `camera follow [SPRITE]` / `stop camera follow` — optional follow mode.
+- `update anchored sprites` — call in a loop to apply camera-follow motion.
+- `terrain zone at [SPRITE]` — zone query locked to a moving sprite.
+
+**Structures**:
+- `generate structures with density [0-100]` — scatters named structures on
+  grass using a second noise field compared against the land map.
+- `structure at world x, y` — `house`, `tower`, `tree`, `boulder`, `well`,
+  `windmill`, or empty. Six structure images are embedded in the extension
+  and drawn on the map.
+- `show/hide structures`, `structures visible?`.
 
 **Camera**:
 - `set camera x/y`, `change camera x/y by`, `camera x`, `camera y`.
-- `set zoom to N tiles across`, `zoom`.
+- `set zoom to N tiles across`, `change zoom`, `zoom`.
 - `world x to screen x`, `world y to screen y`,
   `screen x to world x`, `screen y to world y`.
 - `show terrain`, `hide terrain`, `redraw terrain`.
@@ -79,5 +103,6 @@ go to x: (world x to screen x (player world x)) y: (world y to screen y (player 
   on top of it. Pen, video, and other stage layers are untouched.
 - The heightmap lives in the extension for the session; it is not saved into
   the project file. Regenerate it on green flag (same seed = same world).
-- Generation is synchronous: 512 is instant, 1024 takes ~0.5s, 2048 a few
-  seconds on a desktop. Generate once at startup, then just move the camera.
+- Starting a new generation always cancels one already in flight.
+- All numeric inputs are hardened: Infinity is ignored, NaN becomes 0, and
+  out-of-range values are clamped, so hostile inputs can't corrupt the map.
