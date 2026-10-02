@@ -99,16 +99,16 @@ test('same seed regenerates the identical world', t => {
     t.end();
 });
 
-test('world size clamps to the 64..2048 range', t => {
+test('world size clamps to the 64..5120 range', async t => {
     const ext = makeExt();
     ext.generateTerrain({SEED: 1, SIZE: 10, OCTAVES: 3});
     t.equal(ext.terrainSize(), 64);
-    ext.generateTerrain({SEED: 1, SIZE: 99999, OCTAVES: 3});
-    t.equal(ext.terrainSize(), 2048);
+    await ext.generateTerrain({SEED: 1, SIZE: 99999, OCTAVES: 3});
+    t.equal(ext.terrainSize(), 5120);
     t.end();
 });
 
-test('terrainHeight uses bilinear sampling and world bounds', t => {
+test('terrainHeight uses bilinear sampling and samples infinitely', t => {
     const ext = makeExt();
     ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
     const a = ext.terrainHeight({X: 10, Y: 10});
@@ -116,8 +116,11 @@ test('terrainHeight uses bilinear sampling and world bounds', t => {
     const mid = ext.terrainHeight({X: 10.5, Y: 10});
     t.ok(mid >= Math.min(a, b) - 1e-6 && mid <= Math.max(a, b) + 1e-6,
         'bilinear midpoint stays between its neighbors');
-    t.equal(ext.terrainHeight({X: -100, Y: 0}), 0, 'out of bounds clamps');
-    t.equal(ext.terrainHeight({X: 100000, Y: 0}), 0, 'out of bounds clamps');
+    // No end to the world: out-of-bounds sampling stays finite and in [0, 1].
+    for (const [x, y] of [[-100, 0], [100000, 0], [-1e9, 1e9]]) {
+        const h = ext.terrainHeight({X: x, Y: y});
+        t.ok(isFinite(h) && h >= 0 && h <= 1, `infinite sample at (${x},${y}) = ${h}`);
+    }
     t.end();
 });
 
@@ -125,7 +128,7 @@ test('land/ocean/beach classification and thresholds', t => {
     const ext = makeExt();
     ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
     const sample = () => {
-        const counts = {ocean: 0, beach: 0, land: 0};
+        const counts = {ocean: 0, beach: 0, grass: 0, mountain: 0, snow: 0};
         for (let y = 0; y < 256; y += 4) {
             for (let x = 0; x < 256; x += 4) {
                 counts[ext.tileAt({X: x, Y: y})]++;
@@ -134,8 +137,8 @@ test('land/ocean/beach classification and thresholds', t => {
         return counts;
     };
     const mid = sample();
-    t.ok(mid.ocean > 0 && mid.beach > 0 && mid.land > 0,
-        `all three classes present: ${JSON.stringify(mid)}`);
+    t.ok(mid.ocean > 0 && mid.beach > 0 && mid.grass > 0,
+        `ocean/beach/grass present: ${JSON.stringify(mid)}`);
     const h128 = ext.terrainHeight({X: 128, Y: 128});
     const expectTile = h128 < 0 ? 'ocean' : ext.tileAt({X: 128, Y: 128});
     t.equal(ext.tileAt({X: 128, Y: 128}), expectTile);
@@ -164,9 +167,9 @@ test('camera and zoom setters behave', t => {
     const ext = makeExt();
     ext.generateTerrain({SEED: 42, SIZE: 256, OCTAVES: 3});
     ext.setZoom({ZOOM: 0});
-    t.equal(ext.zoom(), 8, 'zoom clamps to minimum');
+    t.equal(ext.zoom(), 4, 'zoom clamps to minimum');
     ext.setZoom({ZOOM: 100000});
-    t.equal(ext.zoom(), 256, 'zoom clamps to world size');
+    t.equal(ext.zoom(), 8192, 'zoom clamps to maximum');
     ext.setCamera({X: 128, Y: 128});
     ext.changeCameraX({DX: 50});
     ext.changeCameraY({DY: -25});
@@ -218,7 +221,8 @@ test('setTerrainLevels sets ocean and beach thresholds together', t => {
     let land = 0;
     for (let y = 0; y < 256; y += 8) {
         for (let x = 0; x < 256; x += 8) {
-            if (ext.tileAt({X: x, Y: y}) === 'land') land++;
+            const tile = ext.tileAt({X: x, Y: y});
+            if (tile === 'grass' || tile === 'mountain' || tile === 'snow') land++;
         }
     }
     t.ok(land > 900, `near-total land at sea level 0.01 (got ${land})`);
@@ -259,7 +263,7 @@ test('garbage inputs cannot corrupt extension state', t => {
     ext.setSeaLevel({LEVEL: NaN});
     t.equal(ext.seaLevel(), 0, 'NaN casts to 0 like Scratch');
     ext.setZoom({ZOOM: NaN});
-    t.equal(ext.zoom(), 8, 'NaN zoom clamps to minimum');
+    t.equal(ext.zoom(), 4, 'NaN zoom clamps to minimum');
     const stateFinite = () => [ext.seaLevel(), ext.beachHeight(), ext.zoom(),
         ext.cameraX(), ext.cameraY()].every(isFinite);
     t.ok(stateFinite(), 'all state finite after NaN inputs');
@@ -332,6 +336,315 @@ test('noise reporters never return NaN, even for extreme inputs', t => {
     for (const [fn, name] of cases) {
         const r = fn();
         t.ok(isFinite(r), `${name} is finite (got ${r})`);
+    }
+    t.end();
+});
+
+test('generateTerrain accepts sizes up to 5120 with legacy snap below 2048', async t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 1, SIZE: 100, OCTAVES: 5});
+    t.equal(ext.terrainSize(), 128, 'legacy power-of-two snap preserved');
+    await ext.generateTerrain({SEED: 1, SIZE: 3000, OCTAVES: 5});
+    t.equal(ext.terrainSize(), 3000, 'no snap above 2048');
+    t.end();
+});
+
+test('large worlds generate asynchronously without freezing', async t => {
+    const ext = makeExt();
+    const r = ext.generateTerrain({SEED: 99, SIZE: 2100, OCTAVES: 5});
+    t.ok(r && typeof r.then === 'function', 'returns a promise for huge worlds');
+    t.ok(ext.terrainGenProgress() < 1, 'progress starts below 1');
+    await r;
+    t.equal(ext.terrainGenProgress(), 1, 'progress reaches 1');
+    t.equal(ext.terrainSize(), 2100);
+    t.ok(ext.terrainGenerated());
+    const h = ext.terrainHeight({X: 1000.5, Y: 1000.5});
+    t.ok(h >= 0 && h <= 1, `height in range: ${h}`);
+    t.end();
+});
+
+test('small worlds stay synchronous', t => {
+    const ext = makeExt();
+    const r = ext.generateTerrain({SEED: 5, SIZE: 256, OCTAVES: 5});
+    t.notOk(r && typeof r.then === 'function', 'no promise for small worlds');
+    t.equal(ext.terrainGenProgress(), 1);
+    t.end();
+});
+
+test('infinite sampling: finite heights everywhere, no end', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
+    const pts = [[-1e6, -1e6], [1e12, 5], [1e308, 1e308], [-0.5, 300], [1e9, -1e9]];
+    for (const [x, y] of pts) {
+        const h = ext.terrainHeight({X: x, Y: y});
+        t.ok(isFinite(h) && h >= 0 && h <= 1, `height at (${x},${y}) = ${h}`);
+        t.ok(['ocean', 'beach', 'grass', 'mountain', 'snow'].includes(ext.tileAt({X: x, Y: y})));
+        t.ok(['deep ocean', 'ocean', 'shallows', 'beach', 'grass', 'mountain', 'snowy peak']
+            .includes(ext.terrainZoneAt({X: x, Y: y})));
+    }
+    t.end();
+});
+
+test('zones, depth and altitude are consistent', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
+    // Find one ocean and one grass tile by scanning.
+    let oceanPt = null;
+    let grassPt = null;
+    for (let y = 0; y < 256 && (!oceanPt || !grassPt); y += 4) {
+        for (let x = 0; x < 256 && (!oceanPt || !grassPt); x += 4) {
+            const tile = ext.tileAt({X: x, Y: y});
+            if (tile === 'ocean' && !oceanPt) oceanPt = [x, y];
+            if (tile === 'grass' && !grassPt) grassPt = [x, y];
+        }
+    }
+    t.ok(oceanPt && grassPt, 'found ocean and grass samples');
+    t.ok(ext.waterDepthAt({X: oceanPt[0], Y: oceanPt[1]}) > 0, 'ocean has depth');
+    t.equal(ext.heightAboveSeaAt({X: oceanPt[0], Y: oceanPt[1]}), 0, 'ocean has no altitude');
+    t.ok(ext.heightAboveSeaAt({X: grassPt[0], Y: grassPt[1]}) > 0, 'grass has altitude');
+    t.equal(ext.waterDepthAt({X: grassPt[0], Y: grassPt[1]}), 0, 'grass has no depth');
+    t.end();
+});
+
+test('mountain/snow tiers, sandy clearings and threshold ordering', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
+    // All five tile types appear on a default world.
+    const seen = new Set();
+    for (let y = 0; y < 256; y += 2) {
+        for (let x = 0; x < 256; x += 2) {
+            seen.add(ext.tileAt({X: x, Y: y}));
+        }
+    }
+    for (const want of ['ocean', 'beach', 'grass', 'mountain', 'snow']) {
+        t.ok(seen.has(want), `tile type '${want}' exists`);
+    }
+    // Sandy clearings: beach tiles fully surrounded by grass (no ocean nearby).
+    let clearing = null;
+    outer: for (let y = 4; y < 252; y += 2) {
+        for (let x = 4; x < 252; x += 2) {
+            if (ext.tileAt({X: x, Y: y}) !== 'beach') continue;
+            let allGrass = true;
+            for (let dy = -3; dy <= 3 && allGrass; dy++) {
+                for (let dx = -3; dx <= 3; dx++) {
+                    if (ext.tileAt({X: x + dx, Y: y + dy}) === 'ocean') {
+                        allGrass = false;
+                        break;
+                    }
+                }
+            }
+            if (allGrass) {
+                // Confirm the ring around it really is grass, not mountain/snow.
+                let ringGrass = true;
+                for (let dy = -2; dy <= 2 && ringGrass; dy++) {
+                    for (let dx = -2; dx <= 2; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        if (ext.tileAt({X: x + dx, Y: y + dy}) !== 'grass') {
+                            ringGrass = false;
+                            break;
+                        }
+                    }
+                }
+                if (ringGrass) { clearing = [x, y]; break outer; }
+            }
+        }
+    }
+    t.ok(clearing, `inland beach clearing surrounded by grass at ${clearing}`);
+    // Mountain/snow setters keep ordering: sea < beachTop <= mountain <= snow.
+    ext.setMountainSnow({MOUNTAIN: 0.9, SNOW: 0.1});
+    t.ok(ext.mountainLine() <= ext.snowLine(), 'snow stays above mountain');
+    ext.setTerrainLevels({OCEAN: 0.95, BEACH: 0.2});
+    t.ok(ext.mountainLine() >= 0.95, 'mountain pushed above raised beach');
+    t.ok(ext.snowLine() >= ext.mountainLine(), 'snow still on top');
+    t.ok(ext.snowLine() <= 1, 'snow clamped to 1');
+    ext.setMountainSnow({MOUNTAIN: NaN, SNOW: Infinity});
+    t.ok(isFinite(ext.mountainLine()) && isFinite(ext.snowLine()), 'bad tier inputs ignored');
+    // Recolor the new tiers, including the legacy 'land' alias.
+    ext.setTerrainColor({TARGET: 'mountain', COLOR: '#ff0000'});
+    ext.setTerrainColor({TARGET: 'land', COLOR: '#00ff00'});
+    ext.setTerrainColor({TARGET: 'snow', COLOR: '#0000ff'});
+    t.end();
+});
+
+// ---- sprite world tools (stub runtime + fake sprite) ----
+
+const makeSpriteTarget = (id, name) => ({
+    id: id,
+    isStage: false,
+    sprite: {name: name},
+    x: 0,
+    y: 0,
+    direction: 90,
+    setXY (x, y) { this.x = x; this.y = y; },
+    setDirection (d) { this.direction = d; }
+});
+const makeSpriteExt = () => {
+    const hero = makeSpriteTarget('hero-id', 'Hero');
+    const runtime = {
+        renderer: null,
+        requestRedraw () {},
+        getSpriteTargetByName (n) { return n === 'Hero' ? hero : undefined; },
+        getTargetById (id) { return id === 'hero-id' ? hero : undefined; }
+    };
+    const Terrain = require('../../src/extensions/sb_terrain');
+    const ext = new Terrain(runtime);
+    const util = {target: hero};
+    return {ext, hero, util};
+};
+
+test('sprite anchor/move/world-position blocks', t => {
+    const {ext, hero, util} = makeSpriteExt();
+    ext.generateTerrain({SEED: 7, SIZE: 256, OCTAVES: 5});
+    t.equal(ext.spriteAnchored({SPRITE: ''}, util), false);
+    ext.anchorSprite({SPRITE: ''}, util);
+    t.equal(ext.spriteAnchored({SPRITE: ''}, util), true);
+    t.equal(ext.spriteAnchored({SPRITE: 'Nobody'}, util), false, 'unknown sprite not anchored');
+    // Camera starts at world center (128,128); sprite at screen (0,0) => world (128,128).
+    t.equal(ext.spriteWorldX({SPRITE: ''}, util), 128);
+    t.equal(ext.spriteWorldY({SPRITE: ''}, util), 128);
+    ext.moveSpriteInWorld({SPRITE: '', DX: 10, DY: -5}, util);
+    t.equal(ext.spriteWorldX({SPRITE: ''}, util), 138);
+    t.equal(ext.spriteWorldY({SPRITE: ''}, util), 123);
+    ext.setSpriteWorldPos({SPRITE: '', X: 200, Y: 200}, util);
+    t.equal(ext.spriteWorldX({SPRITE: ''}, util), 200);
+    t.equal(ext.spriteWorldY({SPRITE: ''}, util), 200);
+    // Panning the camera keeps the anchored sprite glued to its world spot.
+    ext.setCamera({X: 148, Y: 148});
+    t.equal(ext.spriteWorldX({SPRITE: ''}, util), 200, 'world pos unchanged by pan');
+    t.equal(hero.x, (200 - 148) * (480 / ext.zoom()), 'screen pos shifted by pan');
+    ext.unanchorSprite({SPRITE: ''}, util);
+    t.equal(ext.spriteAnchored({SPRITE: ''}, util), false);
+    t.end();
+});
+
+test('camera follow locks onto the sprite', t => {
+    const {ext, hero, util} = makeSpriteExt();
+    ext.generateTerrain({SEED: 7, SIZE: 256, OCTAVES: 5});
+    ext.setSpriteWorldPos({SPRITE: 'Hero', X: 200, Y: 200}, util);
+    ext.cameraFollow({SPRITE: 'Hero'}, util);
+    ext.updateAnchoredSprites({}, util);
+    t.ok(Math.abs(ext.cameraX() - 200) < 1e-9, `camera x follows: ${ext.cameraX()}`);
+    t.ok(Math.abs(ext.cameraY() - 200) < 1e-9, `camera y follows: ${ext.cameraY()}`);
+    t.ok(Math.abs(hero.x) < 1e-9 && Math.abs(hero.y) < 1e-9, 'sprite centered on screen');
+    ext.stopCameraFollow();
+    ext.setCamera({X: 0, Y: 0});
+    t.equal(ext.cameraX(), 0, 'camera free after stop');
+    t.end();
+});
+
+test('point sprite towards world position', t => {
+    const {ext, hero, util} = makeSpriteExt();
+    ext.generateTerrain({SEED: 7, SIZE: 256, OCTAVES: 5});
+    ext.setSpriteWorldPos({SPRITE: '', X: 128, Y: 128}, util);
+    ext.pointSpriteTowardsWorld({SPRITE: '', X: 228, Y: 128}, util); // due east in world
+    t.ok(Math.abs(hero.direction - 90) < 1e-9, `faces east: ${hero.direction}`);
+    ext.pointSpriteTowardsWorld({SPRITE: '', X: 128, Y: 228}, util); // due north
+    t.ok(Math.abs(hero.direction - 0) < 1e-9, `faces north: ${hero.direction}`);
+    ext.pointSpriteTowardsWorld({SPRITE: '', X: 128, Y: 128}, util); // same spot: no-op
+    t.ok(isFinite(hero.direction), 'no NaN when pointing at self');
+    t.end();
+});
+
+test('zoom keeps anchored sprites on their world spots', t => {
+    const {ext, hero, util} = makeSpriteExt();
+    ext.generateTerrain({SEED: 7, SIZE: 256, OCTAVES: 5});
+    ext.setSpriteWorldPos({SPRITE: '', X: 150, Y: 150}, util);
+    ext.anchorSprite({SPRITE: ''}, util);
+    ext.setZoom({ZOOM: 60});
+    t.ok(Math.abs(ext.spriteWorldX({SPRITE: ''}, util) - 150) < 1e-9, 'world x kept across zoom');
+    t.ok(Math.abs(ext.spriteWorldY({SPRITE: ''}, util) - 150) < 1e-9, 'world y kept across zoom');
+    t.end();
+});
+
+test('terrain zone locks to a sprite', t => {
+    const {ext, hero, util} = makeSpriteExt();
+    ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
+    ext.setSpriteWorldPos({SPRITE: '', X: 10, Y: 10}, util);
+    const viaSprite = ext.terrainZoneAtSprite({SPRITE: ''}, util);
+    const viaCoords = ext.terrainZoneAt({X: 10, Y: 10});
+    t.equal(viaSprite, viaCoords, 'sprite-locked zone matches coordinate zone');
+    t.equal(ext.terrainZoneAtSprite({SPRITE: 'Nobody'}, util), 'ocean', 'unknown sprite safe default');
+    t.end();
+});
+
+test('structures are deterministic and density-sensitive', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 4242, SIZE: 256, OCTAVES: 5});
+    ext.generateStructures({DENSITY: 40});
+    const a = ext.structureAt({X: 50, Y: 60});
+    t.equal(a, ext.structureAt({X: 50, Y: 60}), 'same tile, same answer');
+    t.ok(a === '' || ['house', 'tower', 'tree', 'boulder', 'well', 'windmill'].includes(a));
+    // Count structures in a sweep at two densities.
+    let count40 = 0;
+    for (let y = 0; y < 256; y += 2) {
+        for (let x = 0; x < 256; x += 2) {
+            if (ext.structureAt({X: x, Y: y}) !== '') count40++;
+        }
+    }
+    ext.generateStructures({DENSITY: 0});
+    let count0 = 0;
+    for (let y = 0; y < 256; y += 2) {
+        for (let x = 0; x < 256; x += 2) {
+            if (ext.structureAt({X: x, Y: y}) !== '') count0++;
+        }
+    }
+    t.equal(count0, 0, 'density 0 places nothing');
+    t.ok(count40 > 0, `density 40 places structures (${count40})`);
+    // NaN casts to 0 via Scratch's Cast (like setSeaLevel etc.), so density 0.
+    ext.generateStructures({DENSITY: 40});
+    ext.generateStructures({DENSITY: NaN});
+    let countNaN = 0;
+    for (let y = 0; y < 256; y += 8) {
+        for (let x = 0; x < 256; x += 8) {
+            if (ext.structureAt({X: x, Y: y}) !== '') countNaN++;
+        }
+    }
+    t.equal(countNaN, 0, 'NaN density casts to 0 like Scratch');
+    // Infinity is ignored, keeping the previous setting.
+    ext.generateStructures({DENSITY: 40});
+    ext.generateStructures({DENSITY: Infinity});
+    let countInf = 0;
+    for (let y = 0; y < 256; y += 8) {
+        for (let x = 0; x < 256; x += 8) {
+            if (ext.structureAt({X: x, Y: y}) !== '') countInf++;
+        }
+    }
+    t.ok(countInf > 0, 'Infinity density ignored, previous kept');
+    t.equal(ext.structureAt({X: NaN, Y: 5}), '', 'NaN coords safe');
+    t.end();
+});
+
+test('structure visibility toggles', t => {
+    const ext = makeExt();
+    t.equal(ext.structuresVisible(), true);
+    ext.showStructures({SHOWHIDE: 'hide'});
+    t.equal(ext.structuresVisible(), false);
+    ext.showStructures({SHOWHIDE: 'show'});
+    t.equal(ext.structuresVisible(), true);
+    t.end();
+});
+
+test('getInfo covers every block argument and the new menus', t => {
+    const ext = makeExt();
+    const info = ext.getInfo();
+    const blocks = info.blocks.filter(b => typeof b !== 'string');
+    t.ok(blocks.length >= 45, `block count grew: ${blocks.length}`);
+    for (const b of blocks) {
+        const refs = [...b.text.matchAll(/\[([A-Z0-9_]+)\]/g)].map(m => m[1]);
+        for (const r of refs) {
+            t.ok(b.arguments[r], `block ${b.opcode} defines argument [${r}]`);
+        }
+    }
+    t.ok(info.menus.worldSize.items.includes('5120'), '5120 in size menu');
+    const opcodes = blocks.map(b => b.opcode);
+    for (const op of ['terrainGenProgress', 'terrainZoneAt', 'terrainZoneAtSprite',
+        'waterDepthAt', 'heightAboveSeaAt', 'setMountainSnow', 'mountainLine', 'snowLine',
+        'anchorSprite', 'unanchorSprite',
+        'spriteAnchored', 'moveSpriteInWorld', 'setSpriteWorldPos', 'spriteWorldX',
+        'spriteWorldY', 'pointSpriteTowardsWorld', 'cameraFollow', 'stopCameraFollow',
+        'updateAnchoredSprites', 'generateStructures', 'structureAt',
+        'showStructures', 'structuresVisible']) {
+        t.ok(opcodes.includes(op), `opcode ${op} registered`);
     }
     t.end();
 });
