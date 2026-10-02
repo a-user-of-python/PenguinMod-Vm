@@ -193,3 +193,110 @@ test('large world generates in reasonable time', t => {
     t.ok(ms < 10000, `1024 world generated in ${ms}ms`);
     t.end();
 });
+
+test('setTerrainLevels sets ocean and beach thresholds together', t => {
+    const ext = makeExt();
+    // Works before any world exists (no heightmap needed).
+    ext.setTerrainLevels({OCEAN: 0.6, BEACH: 0.1});
+    t.equal(ext.seaLevel(), 0.6);
+    t.equal(ext.beachHeight(), 0.1);
+    // Values are clamped into [0, 1].
+    ext.setTerrainLevels({OCEAN: -2, BEACH: 5});
+    t.equal(ext.seaLevel(), 0);
+    t.equal(ext.beachHeight(), 1);
+    // Thresholds take effect on classification immediately.
+    ext.generateTerrain({SEED: 12345, SIZE: 256, OCTAVES: 5});
+    ext.setTerrainLevels({OCEAN: 0.99, BEACH: 0});
+    let ocean = 0;
+    for (let y = 0; y < 256; y += 8) {
+        for (let x = 0; x < 256; x += 8) {
+            if (ext.tileAt({X: x, Y: y}) === 'ocean') ocean++;
+        }
+    }
+    t.ok(ocean > 900, `near-total ocean at sea level 0.99 (got ${ocean})`);
+    ext.setTerrainLevels({OCEAN: 0.01, BEACH: 0});
+    let land = 0;
+    for (let y = 0; y < 256; y += 8) {
+        for (let x = 0; x < 256; x += 8) {
+            if (ext.tileAt({X: x, Y: y}) === 'land') land++;
+        }
+    }
+    t.ok(land > 900, `near-total land at sea level 0.01 (got ${land})`);
+    // The block is registered in the palette metadata.
+    const info = ext.getInfo();
+    const block = info.blocks.find(b => b.opcode === 'setTerrainLevels');
+    t.ok(block, 'setTerrainLevels is registered');
+    t.equal(block.arguments.OCEAN.defaultValue, 0.45);
+    t.equal(block.arguments.BEACH.defaultValue, 0.035);
+    t.end();
+});
+
+test('garbage inputs cannot corrupt extension state', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 7, SIZE: 256, OCTAVES: 4});
+
+    // Infinity inputs are ignored, keeping the previous values.
+    ext.setSeaLevel({LEVEL: Infinity});
+    ext.setSeaLevel({LEVEL: -Infinity});
+    t.equal(ext.seaLevel(), 0.45, 'sea level survives Infinity');
+    ext.setBeachHeight({HEIGHT: Infinity});
+    t.equal(ext.beachHeight(), 0.035, 'beach height survives Infinity');
+    ext.setTerrainLevels({OCEAN: Infinity, BEACH: -Infinity});
+    t.equal(ext.seaLevel(), 0.45, 'combined block ignores Infinity ocean');
+    t.equal(ext.beachHeight(), 0.035, 'combined block ignores -Infinity beach');
+    ext.setZoom({ZOOM: Infinity});
+    ext.changeZoom({DELTA: -Infinity});
+    t.equal(ext.zoom(), 120, 'zoom survives Infinity');
+    ext.setCamera({X: 100, Y: 100});
+    ext.setCamera({X: Infinity, Y: 50});
+    ext.changeCameraX({DX: -Infinity});
+    ext.changeCameraY({DY: Infinity});
+    t.equal(ext.cameraX(), 100, 'camera x survives Infinity');
+    t.equal(ext.cameraY(), 100, 'camera y survives Infinity');
+
+    // NaN is normalized to 0 by Scratch's Cast before the extension sees it,
+    // exactly as real blocks behave; state must stay finite and consistent.
+    ext.setSeaLevel({LEVEL: NaN});
+    t.equal(ext.seaLevel(), 0, 'NaN casts to 0 like Scratch');
+    ext.setZoom({ZOOM: NaN});
+    t.equal(ext.zoom(), 8, 'NaN zoom clamps to minimum');
+    const stateFinite = () => [ext.seaLevel(), ext.beachHeight(), ext.zoom(),
+        ext.cameraX(), ext.cameraY()].every(isFinite);
+    t.ok(stateFinite(), 'all state finite after NaN inputs');
+
+    // Non-finite generation inputs fall back to sane defaults (never NaN size).
+    ext.generateTerrain({SEED: NaN, SIZE: NaN, OCTAVES: NaN});
+    t.equal(ext.terrainSize(), 64, 'Cast-mapped 0 size clamps to 64');
+    t.ok(ext.terrainGenerated(), 'world still generated');
+    ext.generateTerrain({SEED: 1, SIZE: Infinity, OCTAVES: -Infinity});
+    t.equal(ext.terrainSize(), 1024, 'Infinity size falls back to 1024');
+    let nanFound = false;
+    for (let i = 0; i < ext._height.length; i += 97) {
+        if (!isFinite(ext._height[i])) { nanFound = true; break; }
+    }
+    t.equal(nanFound, false, 'no NaN in heightmap after bad inputs');
+
+    // Reporters never return NaN for non-finite inputs.
+    t.ok(isFinite(ext.terrainHeight({X: Infinity, Y: -Infinity})));
+    t.equal(ext.tileAt({X: Infinity, Y: 5}), 'ocean', 'Infinity coords use safe default');
+    t.equal(ext.tileAt({X: NaN, Y: NaN}), ext.tileAt({X: 0, Y: 0}),
+        'NaN coords cast to 0 like Scratch');
+    t.equal(ext.perlinNoise({X: Infinity, Y: 1}), 0);
+    t.equal(ext.fractalNoise({X: 1, Y: -Infinity, OCTAVES: Infinity}), 0);
+    t.equal(ext.ridgedNoise({X: NaN, Y: NaN, OCTAVES: NaN}),
+        ext.ridgedNoise({X: 0, Y: 0, OCTAVES: 0}),
+        'NaN noise inputs cast to 0 like Scratch');
+    t.ok(isFinite(ext.screenXOfWorld({WX: Infinity})));
+    t.ok(isFinite(ext.screenYOfWorld({WY: -Infinity})));
+    t.ok(isFinite(ext.worldXOfScreen({SX: NaN})));
+    t.ok(isFinite(ext.worldYOfScreen({SY: NaN})));
+
+    // Garbage strings behave like Scratch: Cast.toNumber maps them to 0.
+    ext.setSeaLevel({LEVEL: 'pudding'});
+    t.equal(ext.seaLevel(), 0, 'garbage string casts to 0');
+    t.equal(ext.terrainHeight({X: 'abc', Y: 'def'}),
+        ext.terrainHeight({X: 0, Y: 0}),
+        'garbage strings cast to 0 like Scratch does');
+    t.ok(stateFinite(), 'all state finite at the end');
+    t.end();
+});

@@ -243,6 +243,13 @@ class SBTerrain {
      * continent-like terrain. Normalized to [0, 1].
      */
     _generate (seed, size, octaves) {
+        // Coerce inputs first: a non-finite size/octave must not produce a
+        // corrupt (NaN-sized) world. Cast.toNumber already maps garbage
+        // strings to 0, but true NaN/Infinity can arrive programmatically.
+        size = Cast.toNumber(size);
+        octaves = Cast.toNumber(octaves);
+        if (!isFinite(size)) size = 1024;
+        if (!isFinite(octaves)) octaves = 5;
         size = clamp(Math.round(size), 64, 2048);
         // Snap to a power of two for predictable memory use.
         const pow = Math.round(Math.log2(size));
@@ -608,6 +615,19 @@ class SBTerrain {
                     })
                 },
                 {
+                    opcode: 'setTerrainLevels',
+                    blockType: BlockType.COMMAND,
+                    text: formatMessage({
+                        id: 'sbTerrain.setTerrainLevels',
+                        default: 'set ocean level [OCEAN] and beach height [BEACH]',
+                        description: 'Set the ocean and beach thresholds together (land is everything above the beach)'
+                    }),
+                    arguments: {
+                        OCEAN: {type: ArgumentType.NUMBER, defaultValue: 0.45},
+                        BEACH: {type: ArgumentType.NUMBER, defaultValue: 0.035}
+                    }
+                },
+                {
                     opcode: 'setTerrainColor',
                     blockType: BlockType.COMMAND,
                     text: formatMessage({
@@ -835,6 +855,7 @@ class SBTerrain {
     perlinNoise (args) {
         const x = Cast.toNumber(args.X);
         const y = Cast.toNumber(args.Y);
+        if (!isFinite(x) || !isFinite(y)) return 0;
         // Scale so integer steps land between lattice points (which are 0).
         return this._noise().noise(x * 0.1, y * 0.1);
     }
@@ -842,14 +863,18 @@ class SBTerrain {
     fractalNoise (args) {
         const x = Cast.toNumber(args.X);
         const y = Cast.toNumber(args.Y);
-        const octaves = Cast.toNumber(args.OCTAVES);
+        let octaves = Cast.toNumber(args.OCTAVES);
+        if (!isFinite(x) || !isFinite(y)) return 0;
+        if (!isFinite(octaves)) octaves = 4;
         return fbm(this._noise(), x * 0.1, y * 0.1, octaves);
     }
 
     ridgedNoise (args) {
         const x = Cast.toNumber(args.X);
         const y = Cast.toNumber(args.Y);
-        const octaves = Cast.toNumber(args.OCTAVES);
+        let octaves = Cast.toNumber(args.OCTAVES);
+        if (!isFinite(x) || !isFinite(y)) return 0;
+        if (!isFinite(octaves)) octaves = 4;
         return ridged(this._noise(), x * 0.1, y * 0.1, octaves);
     }
 
@@ -857,19 +882,25 @@ class SBTerrain {
         if (!this._height) return 0;
         const x = Cast.toNumber(args.X);
         const y = Cast.toNumber(args.Y);
+        if (!isFinite(x) || !isFinite(y)) return 0;
         if (x < 0 || y < 0 || x > this._size - 1 || y > this._size - 1) return 0;
         return this._sampleBilinear(x, y);
     }
 
     tileAt (args) {
         if (!this._height) return 'ocean';
-        const h = this._sampleNearest(Cast.toNumber(args.X), Cast.toNumber(args.Y));
+        const x = Cast.toNumber(args.X);
+        const y = Cast.toNumber(args.Y);
+        if (!isFinite(x) || !isFinite(y)) return 'ocean';
+        const h = this._sampleNearest(x, y);
         const c = this._classify(h);
         return c === 0 ? 'ocean' : (c === 1 ? 'beach' : 'land');
     }
 
     setSeaLevel (args) {
-        this._seaLevel = clamp(Cast.toNumber(args.LEVEL), 0, 1);
+        const level = Cast.toNumber(args.LEVEL);
+        if (!isFinite(level)) return; // keep the previous level on bad input
+        this._seaLevel = clamp(level, 0, 1);
         this._rebuildLUT();
         this._render();
     }
@@ -879,13 +910,25 @@ class SBTerrain {
     }
 
     setBeachHeight (args) {
-        this._beachHeight = clamp(Cast.toNumber(args.HEIGHT), 0, 1);
+        const height = Cast.toNumber(args.HEIGHT);
+        if (!isFinite(height)) return; // keep the previous height on bad input
+        this._beachHeight = clamp(height, 0, 1);
         this._rebuildLUT();
         this._render();
     }
 
     beachHeight () {
         return this._beachHeight;
+    }
+
+    setTerrainLevels (args) {
+        const ocean = Cast.toNumber(args.OCEAN);
+        const beach = Cast.toNumber(args.BEACH);
+        // Non-finite inputs are ignored so one bad value can't corrupt the map.
+        if (isFinite(ocean)) this._seaLevel = clamp(ocean, 0, 1);
+        if (isFinite(beach)) this._beachHeight = clamp(beach, 0, 1);
+        this._rebuildLUT();
+        this._render();
     }
 
     setTerrainColor (args) {
@@ -898,14 +941,18 @@ class SBTerrain {
     }
 
     setZoom (args) {
+        const zoom = Cast.toNumber(args.ZOOM);
+        if (!isFinite(zoom)) return; // keep the previous zoom on bad input
         const maxZoom = this._size > 0 ? this._size : 2048;
-        this._zoom = clamp(Cast.toNumber(args.ZOOM), 8, maxZoom);
+        this._zoom = clamp(zoom, 8, maxZoom);
         this._render();
     }
 
     changeZoom (args) {
+        const delta = Cast.toNumber(args.DELTA);
+        if (!isFinite(delta)) return;
         const maxZoom = this._size > 0 ? this._size : 2048;
-        this._zoom = clamp(this._zoom + Cast.toNumber(args.DELTA), 8, maxZoom);
+        this._zoom = clamp(this._zoom + delta, 8, maxZoom);
         this._render();
     }
 
@@ -914,18 +961,25 @@ class SBTerrain {
     }
 
     setCamera (args) {
-        this._camX = Cast.toNumber(args.X);
-        this._camY = Cast.toNumber(args.Y);
+        const x = Cast.toNumber(args.X);
+        const y = Cast.toNumber(args.Y);
+        if (!isFinite(x) || !isFinite(y)) return; // keep position on bad input
+        this._camX = x;
+        this._camY = y;
         this._render();
     }
 
     changeCameraX (args) {
-        this._camX += Cast.toNumber(args.DX);
+        const dx = Cast.toNumber(args.DX);
+        if (!isFinite(dx)) return;
+        this._camX += dx;
         this._render();
     }
 
     changeCameraY (args) {
-        this._camY += Cast.toNumber(args.DY);
+        const dy = Cast.toNumber(args.DY);
+        if (!isFinite(dy)) return;
+        this._camY += dy;
         this._render();
     }
 
@@ -939,21 +993,25 @@ class SBTerrain {
 
     screenXOfWorld (args) {
         const wx = Cast.toNumber(args.WX);
+        if (!isFinite(wx)) return 0;
         return (wx - this._camX) * this._pixelsPerTile();
     }
 
     screenYOfWorld (args) {
         const wy = Cast.toNumber(args.WY);
+        if (!isFinite(wy)) return 0;
         return (wy - this._camY) * this._pixelsPerTile();
     }
 
     worldXOfScreen (args) {
         const sx = Cast.toNumber(args.SX);
+        if (!isFinite(sx)) return this._camX;
         return this._camX + (sx / this._pixelsPerTile());
     }
 
     worldYOfScreen (args) {
         const sy = Cast.toNumber(args.SY);
+        if (!isFinite(sy)) return this._camY;
         return this._camY + (sy / this._pixelsPerTile());
     }
 

@@ -62,6 +62,8 @@ go to x: (world x to screen x (player world x)) y: (world y to screen y (player 
 - `terrain at world x, y` — `ocean`, `beach`, or `land`.
 - `is land / is ocean / is beach at world x, y` — 1 or 0.
 - `set sea level`, `set beach height`, `sea level`, `beach height`.
+- `set ocean level [OCEAN] and beach height [BEACH]` — set both thresholds in
+  one block (land is everything above the beach).
 - `set ocean/beach/land color`, `terrain seed`, `world size`.
 
 **Camera**:
