@@ -1006,6 +1006,28 @@ class SBTerrain {
     // Extension metadata
     // ------------------------------------------------------------------
 
+    /**
+     * Dynamic menu items for the SPRITE dropdowns: the project's current
+     * sprite names, refreshed every time a dropdown opens.
+     * @returns {Array<string>} sprite names (never empty)
+     */
+    _getSpriteMenu () {
+        const names = [];
+        try {
+            const targets = this.runtime ? this.runtime.targets : null;
+            if (targets) {
+                for (const t of targets) {
+                    if (!t.isStage && t.sprite && t.sprite.name) {
+                        names.push(t.sprite.name);
+                    }
+                }
+            }
+        } catch (e) {
+            // fall through to the fallback below
+        }
+        return names.length > 0 ? names : [''];
+    }
+
     getInfo () {
         return {
             id: 'sbTerrain',
@@ -1175,7 +1197,7 @@ class SBTerrain {
                         description: 'Depth/altitude zone under a sprite (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1423,7 +1445,7 @@ class SBTerrain {
                         description: 'Glue a sprite to its world position; it stays put while the camera pans (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1435,7 +1457,7 @@ class SBTerrain {
                         description: 'Stop gluing a sprite to the world (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1447,7 +1469,7 @@ class SBTerrain {
                         description: 'Whether a sprite is glued to the world (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1459,7 +1481,7 @@ class SBTerrain {
                         description: 'Move a sprite by world tiles (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''},
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''},
                         DX: {type: ArgumentType.NUMBER, defaultValue: 10},
                         DY: {type: ArgumentType.NUMBER, defaultValue: 0}
                     }
@@ -1473,7 +1495,7 @@ class SBTerrain {
                         description: 'Teleport a sprite to a world position (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''},
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''},
                         X: {type: ArgumentType.NUMBER, defaultValue: 512},
                         Y: {type: ArgumentType.NUMBER, defaultValue: 512}
                     }
@@ -1487,7 +1509,7 @@ class SBTerrain {
                         description: 'World x under a sprite (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1499,7 +1521,7 @@ class SBTerrain {
                         description: 'World y under a sprite (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1511,7 +1533,7 @@ class SBTerrain {
                         description: 'Turn a sprite to face a world position (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''},
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''},
                         X: {type: ArgumentType.NUMBER, defaultValue: 512},
                         Y: {type: ArgumentType.NUMBER, defaultValue: 512}
                     }
@@ -1525,7 +1547,7 @@ class SBTerrain {
                         description: 'Lock the camera onto a sprite; call [update anchored sprites] in a loop (blank = this sprite)'
                     }),
                     arguments: {
-                        SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                        SPRITE: {type: ArgumentType.STRING, menu: 'sprite', defaultValue: ''}
                     }
                 },
                 {
@@ -1691,6 +1713,13 @@ class SBTerrain {
                     acceptReporters: true,
                     items: ['deep ocean', 'ocean', 'shallows', 'beach', 'grass',
                         'mountain', 'snowy peak']
+                },
+                sprite: {
+                    acceptReporters: true,
+                    // A string `items` names a method on this extension that
+                    // returns the menu entries when the dropdown opens, so
+                    // the list always shows the project's current sprites.
+                    items: '_getSpriteMenu'
                 }
             }
         };

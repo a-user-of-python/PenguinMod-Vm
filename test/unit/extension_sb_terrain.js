@@ -737,3 +737,21 @@ test('current zone reporter and zone-entered hat', t => {
     t.equal(ext.whenZoneEntered({ZONE: 'nope'}, util), false, 'bogus zone never fires');
     t.end();
 });
+
+test('sprite dropdown menu lists project sprites dynamically', t => {
+    const ext = makeExt();
+    ext.runtime = {targets: [
+        {isStage: true, sprite: null, id: 'stage'},
+        {isStage: false, sprite: {name: 'Player'}, id: 'a'},
+        {isStage: false, sprite: {name: 'Enemy'}, id: 'b'},
+        {isStage: false, sprite: null, id: 'c'}
+    ]};
+    t.deepEqual(ext._getSpriteMenu(), ['Player', 'Enemy']);
+    ext.runtime = {targets: []};
+    t.ok(ext._getSpriteMenu().length > 0, 'never returns an empty menu');
+    ext.runtime = null;
+    t.ok(ext._getSpriteMenu().length > 0, 'survives missing runtime');
+    const menus = ext.getInfo().menus;
+    t.equal(menus.sprite.items, '_getSpriteMenu', 'menu uses the dynamic function');
+    t.end();
+});
