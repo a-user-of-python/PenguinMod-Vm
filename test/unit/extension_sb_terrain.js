@@ -648,3 +648,21 @@ test('getInfo covers every block argument and the new menus', t => {
     }
     t.end();
 });
+
+test('extreme camera never hangs structure rendering (float precision)', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 42, SIZE: 256, OCTAVES: 4});
+    ext.generateStructures({DENSITY: 80});
+    ext.showStructures({SHOWHIDE: 'show'});
+    // Beyond 2^53, tx++ cannot advance: the old float-bound loop never ended.
+    for (const c of [1e16, 1e18, 1e308, -1e308]) {
+        ext.setCamera({X: c, Y: c});
+        const t0 = Date.now();
+        ext._render();
+        t.ok(Date.now() - t0 < 15000, `render at camera ${c} terminates`);
+    }
+    // Structures still draw at sane cameras.
+    ext.setCamera({X: 128, Y: 128});
+    ext._render();
+    t.end();
+});

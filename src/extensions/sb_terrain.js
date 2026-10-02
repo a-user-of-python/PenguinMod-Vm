@@ -851,8 +851,18 @@ class SBTerrain {
         const ySpan = (this._zoom * STAGE_H) / STAGE_W;
         const y0 = Math.floor(this._camY - (ySpan / 2)) - 1;
         const y1 = Math.ceil(this._camY + (ySpan / 2)) + 1;
-        for (let ty = y0; ty <= y1; ty++) {
-            for (let tx = x0; tx <= x1; tx++) {
+        // Iterate by count, not by float comparison: beyond ~2^53, tx++ can no
+        // longer advance past a huge camX and the loop would never terminate.
+        // The span can never legitimately exceed zoom + a small margin.
+        let nx = x1 - x0;
+        let ny = y1 - y0;
+        if (!isFinite(nx) || !isFinite(ny) || nx < 0 || ny < 0) return;
+        const maxSpan = this._zoom + 8;
+        if (nx > maxSpan || ny > maxSpan) return;
+        for (let iy = 0; iy <= ny; iy++) {
+            const ty = y0 + iy;
+            for (let ix = 0; ix <= nx; ix++) {
+                const tx = x0 + ix;
                 const type = this._structureTypeAt(tx, ty);
                 if (!type) continue;
                 const icon = this._structIcons[type];
