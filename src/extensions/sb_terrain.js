@@ -412,6 +412,14 @@ class SBTerrain {
         this._anchors = new Set();
         // Last seen zone per sprite id, for the "when I enter [zone]" hat.
         this._zoneMemory = new Map();
+        // Minimap: small whole-world view pinned to a stage corner.
+        this._minimapVisible = false;
+        this._minimapSize = 120;
+        this._minimapCorner = 'top right';
+        this._minimapSkinId = null;
+        this._minimapDrawable = null;
+        this._minimapImageData = null;
+        this._minimapBuiltSize = 0;
         this._followName = null; // sprite name the camera follows, or null
 
         // Terrain shape tunables (internal; not blocks).
@@ -765,6 +773,7 @@ class SBTerrain {
             this._structSkinId = null;
             this._structDrawable = null;
         }
+        this._renderMinimap();
     }
 
     _pixelsPerTile () {
@@ -1664,6 +1673,37 @@ class SBTerrain {
                         description: 'Whether structure icons are shown'
                     })
                 },
+                {
+                    opcode: 'showMinimap',
+                    blockType: BlockType.COMMAND,
+                    text: formatMessage({
+                        id: 'sbTerrain.showMinimap',
+                        default: 'show minimap size [SIZE] at [CORNER]',
+                        description: 'Show a small whole-world map in a corner of the stage'
+                    }),
+                    arguments: {
+                        SIZE: {type: ArgumentType.NUMBER, defaultValue: 120},
+                        CORNER: {type: ArgumentType.STRING, menu: 'minimapCorner', defaultValue: 'top right'}
+                    }
+                },
+                {
+                    opcode: 'hideMinimap',
+                    blockType: BlockType.COMMAND,
+                    text: formatMessage({
+                        id: 'sbTerrain.hideMinimap',
+                        default: 'hide minimap',
+                        description: 'Hide the minimap'
+                    })
+                },
+                {
+                    opcode: 'minimapVisible',
+                    blockType: BlockType.BOOLEAN,
+                    text: formatMessage({
+                        id: 'sbTerrain.minimapVisible',
+                        default: 'minimap visible?',
+                        description: 'Whether the minimap is shown'
+                    })
+                },
                 '---',
                 {
                     opcode: 'showTerrain',
@@ -1720,6 +1760,10 @@ class SBTerrain {
                     // returns the menu entries when the dropdown opens, so
                     // the list always shows the project's current sprites.
                     items: '_getSpriteMenu'
+                },
+                minimapCorner: {
+                    acceptReporters: true,
+                    items: ['top left', 'top right', 'bottom left', 'bottom right']
                 }
             }
         };
@@ -2137,6 +2181,7 @@ class SBTerrain {
         const sy = t.y + (dy * ppt);
         if (!isFinite(sx) || !isFinite(sy)) return; // huge inputs must not warp the sprite
         t.setXY(sx, sy, false, true);
+        this._renderMinimap(); // keep the player dot current
     }
 
     setSpriteWorldPos (args, util) {
@@ -2150,6 +2195,7 @@ class SBTerrain {
         const sy = (y - this._camY) * ppt;
         if (!isFinite(sx) || !isFinite(sy)) return; // huge inputs must not warp the sprite
         t.setXY(sx, sy, false, true);
+        this._renderMinimap(); // keep the player dot current
     }
 
     spriteWorldX (args, util) {
@@ -2272,6 +2318,202 @@ class SBTerrain {
 
     structuresVisible () {
         return this._structuresVisible;
+    }
+
+    // ---------------- Minimap ----------------
+
+    _clampedMinimapSize () {
+        const s = Math.round(Cast.toNumber(this._minimapSize));
+        return clamp(isFinite(s) ? s : 120, 32, 240);
+    }
+
+    _ensureMinimap () {
+        const renderer = this.runtime && this.runtime.renderer;
+        if (!renderer || typeof document === 'undefined') return false;
+        try {
+            const s = this._clampedMinimapSize();
+            if ((this._minimapSkinId === null || typeof this._minimapSkinId === 'undefined') ||
+                this._minimapBuiltSize !== s) {
+                // Size changed (or first build): drop the old skin/drawable.
+                if (this._minimapDrawable !== null && typeof this._minimapDrawable !== 'undefined') {
+                    try {
+                        renderer.destroyDrawable(this._minimapDrawable, StageLayering.SPRITE_LAYER);
+                    } catch (e) { /* already gone */ }
+                }
+                if (this._minimapSkinId !== null && typeof this._minimapSkinId !== 'undefined') {
+                    try {
+                        renderer.destroySkin(this._minimapSkinId);
+                    } catch (e) { /* already gone */ }
+                }
+                this._minimapImageData = new ImageData(s, s);
+                this._minimapSkinId = renderer.createBitmapSkin(this._minimapImageData, 1);
+                // Sprite layer, created after the sprites: the minimap floats
+                // above them like UI in the corner of the scene.
+                this._minimapDrawable = renderer.createDrawable(StageLayering.SPRITE_LAYER);
+                renderer.updateDrawableSkinId(this._minimapDrawable, this._minimapSkinId);
+                this._minimapBuiltSize = s;
+                this._positionMinimap();
+            }
+            renderer.updateDrawableVisible(this._minimapDrawable, this._minimapVisible);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    _positionMinimap () {
+        const renderer = this.runtime && this.runtime.renderer;
+        if (!renderer || this._minimapDrawable === null ||
+            typeof this._minimapDrawable === 'undefined') return;
+        const s = this._clampedMinimapSize();
+        const m = 10; // margin from the stage edges
+        const hx = (STAGE_W / 2) - (s / 2) - m;
+        const hy = (STAGE_H / 2) - (s / 2) - m;
+        let x = hx;
+        let y = hy;
+        switch (this._minimapCorner) {
+        case 'top left': x = -hx; y = hy; break;
+        case 'bottom left': x = -hx; y = -hy; break;
+        case 'bottom right': x = hx; y = -hy; break;
+        default: x = hx; y = hy; break; // top right
+        }
+        try {
+            renderer.updateDrawablePosition(this._minimapDrawable, [x, y]);
+        } catch (e) { /* renderer went away */ }
+    }
+
+    _renderMinimap () {
+        if (!this._minimapVisible || !this._height) return;
+        if (!this._ensureMinimap()) return;
+        const renderer = this.runtime.renderer;
+        const s = this._clampedMinimapSize();
+        const data = this._minimapImageData.data;
+        const size = this._size;
+        const lut = this._lut;
+        // Whole-world thumbnail, downsampled through the terrain colors.
+        for (let my = 0; my < s; my++) {
+            // Minimap row 0 is the top, i.e. the highest world y.
+            const ty = Math.max(0, Math.min(size - 1,
+                Math.floor(size - 1 - (((my + 0.5) / s) * size))));
+            for (let mx = 0; mx < s; mx++) {
+                const tx = Math.max(0, Math.min(size - 1,
+                    Math.floor((((mx + 0.5) / s) * size))));
+                const h = this._height[(ty * size) + tx];
+                let li = (h * (LUT_SIZE - 1)) | 0;
+                if (li < 0) li = 0;
+                else if (li >= LUT_SIZE) li = LUT_SIZE - 1;
+                li *= 3;
+                const p = ((my * s) + mx) * 4;
+                data[p] = lut[li];
+                data[p + 1] = lut[li + 1];
+                data[p + 2] = lut[li + 2];
+                data[p + 3] = 255;
+            }
+        }
+        const setPx = (mx, my, r, g, b) => {
+            if (mx < 0 || my < 0 || mx >= s || my >= s) return;
+            const p = ((my * s) + mx) * 4;
+            data[p] = r;
+            data[p + 1] = g;
+            data[p + 2] = b;
+            data[p + 3] = 255;
+        };
+        const wX = wx => (wx / size) * s;
+        const wY = wy => (s - 1 - ((wy / size) * s));
+        // Viewport rectangle: the tiles the camera currently shows.
+        const vx0 = wX(this._camX - (this._zoom / 2));
+        const vx1 = wX(this._camX + (this._zoom / 2));
+        const ySpan = (this._zoom * STAGE_H) / STAGE_W;
+        const vy0 = wY(this._camY + (ySpan / 2));
+        const vy1 = wY(this._camY - (ySpan / 2));
+        const rx0 = Math.round(Math.min(vx0, vx1));
+        const rx1 = Math.round(Math.max(vx0, vx1));
+        const ry0 = Math.round(Math.min(vy0, vy1));
+        const ry1 = Math.round(Math.max(vy0, vy1));
+        for (let x = rx0; x <= rx1; x++) {
+            for (let k = 0; k < 2; k++) {
+                setPx(x, ry0 + k, 255, 255, 255);
+                setPx(x, ry1 - k, 255, 255, 255);
+            }
+        }
+        for (let y = ry0; y <= ry1; y++) {
+            for (let k = 0; k < 2; k++) {
+                setPx(rx0 + k, y, 255, 255, 255);
+                setPx(rx1 - k, y, 255, 255, 255);
+            }
+        }
+        // Player dot: the camera-followed sprite, if any.
+        if (this._followName && this.runtime) {
+            let f = null;
+            try {
+                f = this.runtime.getSpriteTargetByName(this._followName);
+            } catch (e) {
+                f = null;
+            }
+            if (f && !f.isStage && f.sprite) {
+                const ppt = this._pixelsPerTile();
+                const dx = Math.round(wX(this._camX + (f.x / ppt)));
+                const dy = Math.round(wY(this._camY + (f.y / ppt)));
+                for (let oy = -1; oy <= 1; oy++) {
+                    for (let ox = -1; ox <= 1; ox++) {
+                        setPx(dx + ox, dy + oy, 255, 60, 60);
+                    }
+                }
+            }
+        }
+        // White frame around the minimap.
+        for (let x = 0; x < s; x++) {
+            for (let k = 0; k < 2; k++) {
+                setPx(x, k, 255, 255, 255);
+                setPx(x, s - 1 - k, 255, 255, 255);
+            }
+        }
+        for (let y = 0; y < s; y++) {
+            for (let k = 0; k < 2; k++) {
+                setPx(k, y, 255, 255, 255);
+                setPx(s - 1 - k, y, 255, 255, 255);
+            }
+        }
+        try {
+            renderer.updateBitmapSkin(this._minimapSkinId, this._minimapImageData, 1);
+            renderer.updateDrawableVisible(this._minimapDrawable, this._minimapVisible);
+            if (this.runtime.requestRedraw) this.runtime.requestRedraw();
+        } catch (e) {
+            this._minimapSkinId = null;
+            this._minimapDrawable = null;
+        }
+    }
+
+    showMinimap (args) {
+        const size = Cast.toNumber(args.SIZE);
+        // Non-positive sizes (including NaN/empty, which Cast turns into 0)
+        // keep the previous size instead of collapsing the minimap.
+        if (isFinite(size) && size > 0) {
+            this._minimapSize = clamp(Math.round(size), 32, 240);
+        }
+        const corner = String(args.CORNER).toLowerCase().trim();
+        if (corner === 'top left' || corner === 'top right' ||
+            corner === 'bottom left' || corner === 'bottom right') {
+            this._minimapCorner = corner;
+        }
+        this._minimapVisible = true;
+        this._positionMinimap();
+        this._renderMinimap();
+    }
+
+    hideMinimap () {
+        this._minimapVisible = false;
+        const renderer = this.runtime && this.runtime.renderer;
+        if (renderer && this._minimapDrawable !== null &&
+            typeof this._minimapDrawable !== 'undefined') {
+            try {
+                renderer.updateDrawableVisible(this._minimapDrawable, false);
+            } catch (e) { /* renderer went away */ }
+        }
+    }
+
+    minimapVisible () {
+        return this._minimapVisible;
     }
 
     // ---------------- Visibility ----------------

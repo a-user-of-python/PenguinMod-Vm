@@ -755,3 +755,34 @@ test('sprite dropdown menu lists project sprites dynamically', t => {
     t.equal(menus.sprite.items, '_getSpriteMenu', 'menu uses the dynamic function');
     t.end();
 });
+
+test('minimap show/hide state and size clamping', t => {
+    const ext = makeExt();
+    t.equal(ext.minimapVisible(), false, 'starts hidden');
+    ext.showMinimap({SIZE: 120, CORNER: 'top right'});
+    t.equal(ext.minimapVisible(), true, 'shows after showMinimap');
+    t.equal(ext._minimapSize, 120, 'size stored');
+    t.equal(ext._minimapCorner, 'top right', 'corner stored');
+    ext.showMinimap({SIZE: 9999, CORNER: 'bottom left'});
+    t.equal(ext._minimapSize, 240, 'size clamps to 240 max');
+    t.equal(ext._minimapCorner, 'bottom left', 'corner switches');
+    ext.showMinimap({SIZE: 1, CORNER: 'top left'});
+    t.equal(ext._minimapSize, 32, 'size clamps to 32 min');
+    ext.showMinimap({SIZE: NaN, CORNER: 'top right'});
+    t.equal(ext._minimapSize, 32, 'NaN keeps previous size');
+    ext.showMinimap({SIZE: -50, CORNER: 'bottom right'});
+    t.equal(ext._minimapSize, 32, 'negative keeps previous size');
+    ext.showMinimap({SIZE: 200, CORNER: 'bogus corner'});
+    t.equal(ext._minimapSize, 200, 'valid size still applies');
+    t.equal(ext._minimapCorner, 'bottom right', 'bogus corner keeps previous');
+    ext.hideMinimap();
+    t.equal(ext.minimapVisible(), false, 'hides after hideMinimap');
+    const menus = ext.getInfo().menus;
+    t.deepEqual(menus.minimapCorner.items,
+        ['top left', 'top right', 'bottom left', 'bottom right'],
+        'corner menu lists all four corners');
+    const ops = ext.getInfo().blocks.filter(b => typeof b !== 'string').map(b => b.opcode);
+    t.ok(ops.includes('showMinimap') && ops.includes('hideMinimap') &&
+        ops.includes('minimapVisible'), 'all three minimap blocks registered');
+    t.end();
+});
