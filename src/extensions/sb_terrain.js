@@ -857,7 +857,8 @@ class SBTerrain {
         const y = Cast.toNumber(args.Y);
         if (!isFinite(x) || !isFinite(y)) return 0;
         // Scale so integer steps land between lattice points (which are 0).
-        return this._noise().noise(x * 0.1, y * 0.1);
+        const r = this._noise().noise(x * 0.1, y * 0.1);
+        return isFinite(r) ? r : 0;
     }
 
     fractalNoise (args) {
@@ -866,7 +867,8 @@ class SBTerrain {
         let octaves = Cast.toNumber(args.OCTAVES);
         if (!isFinite(x) || !isFinite(y)) return 0;
         if (!isFinite(octaves)) octaves = 4;
-        return fbm(this._noise(), x * 0.1, y * 0.1, octaves);
+        const r = fbm(this._noise(), x * 0.1, y * 0.1, octaves);
+        return isFinite(r) ? r : 0;
     }
 
     ridgedNoise (args) {
@@ -875,7 +877,8 @@ class SBTerrain {
         let octaves = Cast.toNumber(args.OCTAVES);
         if (!isFinite(x) || !isFinite(y)) return 0;
         if (!isFinite(octaves)) octaves = 4;
-        return ridged(this._noise(), x * 0.1, y * 0.1, octaves);
+        const r = ridged(this._noise(), x * 0.1, y * 0.1, octaves);
+        return isFinite(r) ? r : 0;
     }
 
     terrainHeight (args) {
@@ -972,14 +975,18 @@ class SBTerrain {
     changeCameraX (args) {
         const dx = Cast.toNumber(args.DX);
         if (!isFinite(dx)) return;
-        this._camX += dx;
+        const nx = this._camX + dx;
+        if (!isFinite(nx)) return; // ignore changes that would overflow
+        this._camX = nx;
         this._render();
     }
 
     changeCameraY (args) {
         const dy = Cast.toNumber(args.DY);
         if (!isFinite(dy)) return;
-        this._camY += dy;
+        const ny = this._camY + dy;
+        if (!isFinite(ny)) return; // ignore changes that would overflow
+        this._camY = ny;
         this._render();
     }
 

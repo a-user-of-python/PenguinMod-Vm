@@ -300,3 +300,38 @@ test('garbage inputs cannot corrupt extension state', t => {
     t.ok(stateFinite(), 'all state finite at the end');
     t.end();
 });
+
+test('camera changes that would overflow are ignored', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 7, SIZE: 256, OCTAVES: 4});
+    ext.setCamera({X: 1e308, Y: 0});
+    t.equal(ext.cameraX(), 1e308);
+    ext.changeCameraX({DX: 1e308}); // 1e308 + 1e308 = Infinity
+    t.equal(ext.cameraX(), 1e308, 'overflowing change ignored');
+    t.ok(isFinite(ext.cameraX()), 'camera x stays finite');
+    ext.setCamera({X: 0, Y: -1e308});
+    ext.changeCameraY({DY: -1e308});
+    t.equal(ext.cameraY(), -1e308, 'overflowing change ignored');
+    t.ok(isFinite(ext.cameraY()), 'camera y stays finite');
+    // Normal changes still work after a rejected one.
+    ext.changeCameraX({DX: 5});
+    t.equal(ext.cameraX(), 5);
+    t.end();
+});
+
+test('noise reporters never return NaN, even for extreme inputs', t => {
+    const ext = makeExt();
+    ext.setNoiseSeed({SEED: 42});
+    const cases = [
+        [() => ext.perlinNoise({X: 1e308, Y: 1e308}), 'perlin extreme'],
+        [() => ext.fractalNoise({X: 1e308, Y: -1e308, OCTAVES: 100}), 'fbm extreme'],
+        [() => ext.ridgedNoise({X: -1e308, Y: 1e308, OCTAVES: 100}), 'ridged extreme'],
+        [() => ext.fractalNoise({X: 1e308, Y: 1e308, OCTAVES: 12}), 'fbm huge coords'],
+        [() => ext.ridgedNoise({X: 0, Y: 0, OCTAVES: 1e308}), 'ridged huge octaves']
+    ];
+    for (const [fn, name] of cases) {
+        const r = fn();
+        t.ok(isFinite(r), `${name} is finite (got ${r})`);
+    }
+    t.end();
+});
