@@ -786,3 +786,36 @@ test('minimap show/hide state and size clamping', t => {
         ops.includes('minimapVisible'), 'all three minimap blocks registered');
     t.end();
 });
+
+test('minimap viewport rect never hangs on hostile camera values', t => {
+    const ext = makeExt();
+    // No world needed: the rect math only uses camera/size state.
+    ext._size = 256;
+    const s = 120;
+    const hostile = [0, 1, -1, 42, -256, 256, 1e9, -1e9, 1e308, -1e308,
+        Infinity, -Infinity, NaN, 0.1, Number.MAX_VALUE];
+    for (const cx of hostile) {
+        for (const cy of hostile) {
+            for (const z of hostile) {
+                ext._camX = cx;
+                ext._camY = cy;
+                ext._zoom = z;
+                const r = ext._minimapViewportRect(s);
+                t.ok(r.length === 4, 'returns four bounds');
+                for (const v of r) {
+                    t.ok(Number.isInteger(v) && v >= 0 && v < s,
+                        `bound ${v} inside [0, ${s}) for cam=(${cx},${cy}) zoom=${z}`);
+                }
+                t.ok(r[0] <= r[1] && r[2] <= r[3], 'bounds ordered');
+                // The draw loops must terminate: simulate them with a cap.
+                let guard = 0;
+                for (let x = r[0]; x <= r[1] && guard < 10000; x++) guard++;
+                t.ok(guard < 10000 && guard <= s, 'x loop terminates within s steps');
+                guard = 0;
+                for (let y = r[2]; y <= r[3] && guard < 10000; y++) guard++;
+                t.ok(guard < 10000 && guard <= s, 'y loop terminates within s steps');
+            }
+        }
+    }
+    t.end();
+});

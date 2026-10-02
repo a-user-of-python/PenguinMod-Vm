@@ -2382,6 +2382,33 @@ class SBTerrain {
         } catch (e) { /* renderer went away */ }
     }
 
+    // Viewport rectangle on the minimap: the tiles the camera currently
+    // shows, as inclusive pixel bounds clamped to [0, s - 1].
+    // Clamping happens BEFORE any loop uses these: with a hostile camera
+    // (e.g. x = 1e308) the raw coordinates exceed float precision and `x++`
+    // stops advancing, which would hang the page in an endless loop.
+    _minimapViewportRect (s) {
+        const size = this._size;
+        const wX = wx => (wx / size) * s;
+        const wY = wy => (s - 1 - ((wy / size) * s));
+        const vx0 = wX(this._camX - (this._zoom / 2));
+        const vx1 = wX(this._camX + (this._zoom / 2));
+        const ySpan = (this._zoom * STAGE_H) / STAGE_W;
+        const vy0 = wY(this._camY + (ySpan / 2));
+        const vy1 = wY(this._camY - (ySpan / 2));
+        const clampPx = v => {
+            const r = Math.round(v);
+            if (Number.isNaN(r)) return 0;
+            return Math.max(0, Math.min(s - 1, r));
+        };
+        return [
+            clampPx(Math.min(vx0, vx1)),
+            clampPx(Math.max(vx0, vx1)),
+            clampPx(Math.min(vy0, vy1)),
+            clampPx(Math.max(vy0, vy1))
+        ];
+    }
+
     _renderMinimap () {
         if (!this._minimapVisible || !this._height) return;
         if (!this._ensureMinimap()) return;
@@ -2420,16 +2447,9 @@ class SBTerrain {
         };
         const wX = wx => (wx / size) * s;
         const wY = wy => (s - 1 - ((wy / size) * s));
-        // Viewport rectangle: the tiles the camera currently shows.
-        const vx0 = wX(this._camX - (this._zoom / 2));
-        const vx1 = wX(this._camX + (this._zoom / 2));
-        const ySpan = (this._zoom * STAGE_H) / STAGE_W;
-        const vy0 = wY(this._camY + (ySpan / 2));
-        const vy1 = wY(this._camY - (ySpan / 2));
-        const rx0 = Math.round(Math.min(vx0, vx1));
-        const rx1 = Math.round(Math.max(vx0, vx1));
-        const ry0 = Math.round(Math.min(vy0, vy1));
-        const ry1 = Math.round(Math.max(vy0, vy1));
+        // Viewport rectangle (what the camera sees), pre-clamped so the
+        // loops below always terminate (see _minimapViewportRect).
+        const [rx0, rx1, ry0, ry1] = this._minimapViewportRect(s);
         for (let x = rx0; x <= rx1; x++) {
             for (let k = 0; k < 2; k++) {
                 setPx(x, ry0 + k, 255, 255, 255);
