@@ -96,6 +96,15 @@ forever
   a house, a boulder is small.
 - `show/hide structures`, `structures visible?`.
 
+**Minimap**:
+- `show minimap size [N] at [corner]` — draws a small whole-world map in a
+  corner of the stage (top/bottom × left/right, your choice). Size is the
+  square's side in pixels, clamped to 32–240; junk sizes keep the previous
+  size. The minimap floats above the sprites and shows the whole stored
+  world, a white frame, a rectangle marking what the camera currently sees,
+  and a red dot for the camera-followed sprite.
+- `hide minimap`, `minimap visible?`.
+
 **Camera**:
 - `set camera x/y`, `change camera x/y by`, `camera x`, `camera y`.
 - `set zoom to N tiles across`, `change zoom`, `zoom`.
