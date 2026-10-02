@@ -141,9 +141,11 @@ class Perlin2D {
     /**
      * @param {number} x
      * @param {number} y
-     * @returns {number} noise in roughly [-1, 1]
+     * @returns {number} noise in roughly [-1, 1]; 0 for non-finite input
+     * (octave doubling can overflow past ~1e308 at extreme coordinates)
      */
     noise (x, y) {
+        if (!isFinite(x) || !isFinite(y)) return 0;
         const X = Math.floor(x) & 255;
         const Y = Math.floor(y) & 255;
         x -= Math.floor(x);
@@ -1817,9 +1819,13 @@ class SBTerrain {
 
     /**
      * Keep sea < beachTop <= mountainLine <= snowLine after any edit.
+     * beachTop is clamped to 1 first: heights above 1 don't exist, so a
+     * beach band spilling past 1 would otherwise unorder the tiers.
      */
     _enforceThresholdOrder () {
-        const beachTop = this._seaLevel + Math.max(0, this._beachHeight);
+        this._seaLevel = clamp(this._seaLevel, 0, 1);
+        this._beachHeight = clamp(this._beachHeight, 0, 1 - this._seaLevel);
+        const beachTop = this._seaLevel + this._beachHeight;
         if (this._mountainLine < beachTop) this._mountainLine = beachTop;
         if (this._snowLine < this._mountainLine) this._snowLine = this._mountainLine;
         this._mountainLine = clamp(this._mountainLine, 0, 1);

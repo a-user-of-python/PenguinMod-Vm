@@ -666,3 +666,32 @@ test('extreme camera never hangs structure rendering (float precision)', t => {
     ext._render();
     t.end();
 });
+
+test('extreme coordinates never produce NaN heights (noise overflow)', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 42, SIZE: 256, OCTAVES: 5});
+    const pts = [
+        [-2147483648, 1.7976931348623157e308],
+        [1e308, 1e308], [-1e308, -1e308], [1e18, -1e18], [1e307, 1e307]
+    ];
+    for (const [x, y] of pts) {
+        const h = ext.terrainHeight({X: x, Y: y});
+        t.ok(isFinite(h) && h >= 0 && h <= 1, `height at (${x},${y}) = ${h}`);
+        t.ok(isFinite(ext.waterDepthAt({X: x, Y: y})), 'depth finite');
+        t.ok(ext.structureAt({X: x, Y: y}) !== null, 'structure query ok');
+    }
+    t.end();
+});
+
+test('threshold order survives extreme level inputs', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 42, SIZE: 128, OCTAVES: 3});
+    for (const [o, b] of [[1, 1], [1, 5], [0.9, 0.9], [1e308, 1e308]]) {
+        ext.setTerrainLevels({OCEAN: o, BEACH: b});
+        const beachTop = ext.seaLevel() + ext.beachHeight();
+        t.ok(beachTop <= 1 + 1e-9, `beachTop <= 1 (got ${beachTop})`);
+        t.ok(beachTop <= ext.mountainLine() + 1e-9, 'mountain above beach');
+        t.ok(ext.mountainLine() <= ext.snowLine() + 1e-9, 'snow above mountain');
+    }
+    t.end();
+});
