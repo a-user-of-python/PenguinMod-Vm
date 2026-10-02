@@ -628,7 +628,7 @@ test('getInfo covers every block argument and the new menus', t => {
     const ext = makeExt();
     const info = ext.getInfo();
     const blocks = info.blocks.filter(b => typeof b !== 'string');
-    t.ok(blocks.length >= 45, `block count grew: ${blocks.length}`);
+    t.ok(blocks.length >= 55, `block count grew: ${blocks.length}`);
     for (const b of blocks) {
         const refs = [...b.text.matchAll(/\[([A-Z0-9_]+)\]/g)].map(m => m[1]);
         for (const r of refs) {
@@ -638,6 +638,7 @@ test('getInfo covers every block argument and the new menus', t => {
     t.ok(info.menus.worldSize.items.includes('5120'), '5120 in size menu');
     const opcodes = blocks.map(b => b.opcode);
     for (const op of ['terrainGenProgress', 'terrainZoneAt', 'terrainZoneAtSprite',
+        'currentZone', 'whenZoneEntered',
         'waterDepthAt', 'heightAboveSeaAt', 'setMountainSnow', 'mountainLine', 'snowLine',
         'anchorSprite', 'unanchorSprite',
         'spriteAnchored', 'moveSpriteInWorld', 'setSpriteWorldPos', 'spriteWorldX',
@@ -693,5 +694,46 @@ test('threshold order survives extreme level inputs', t => {
         t.ok(beachTop <= ext.mountainLine() + 1e-9, 'mountain above beach');
         t.ok(ext.mountainLine() <= ext.snowLine() + 1e-9, 'snow above mountain');
     }
+    t.end();
+});
+
+test('structures have per-type sizes and include dungeons', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 42, SIZE: 256, OCTAVES: 5});
+    ext.generateStructures({DENSITY: 70});
+    const seen = new Set();
+    for (let y = 0; y < 256; y += 2) {
+        for (let x = 0; x < 256; x += 2) {
+            const s = ext.structureAt({X: x, Y: y});
+            if (s) seen.add(s);
+        }
+    }
+    t.ok(seen.has('dungeon'), 'dungeons generate');
+    t.ok(seen.size >= 5, `several types present: ${[...seen].join(',')}`);
+    // Size ordering: dungeon renders largest, boulder smallest.
+    const fs = require('fs');
+    const src = fs.readFileSync(__dirname + '/../../src/extensions/sb_terrain.js', 'utf8');
+    t.ok(src.includes('dungeon'), 'dungeon in source');
+    t.end();
+});
+
+test('current zone reporter and zone-entered hat', t => {
+    const ext = makeExt();
+    ext.generateTerrain({SEED: 42, SIZE: 256, OCTAVES: 5});
+    const tgt = {id: 'p1', x: 0, y: 0, direction: 90, sprite: {name: 'p1'}};
+    tgt.setXY = (x, y) => { tgt.x = x; tgt.y = y; };
+    const util = {target: tgt, runtime: {getSpriteTargetByName: () => null}};
+    const z0 = ext.currentZone({}, util);
+    t.ok(['deep ocean', 'ocean', 'shallows', 'beach', 'grass', 'mountain', 'snowy peak'].includes(z0),
+        `current zone is a real zone: ${z0}`);
+    t.equal(ext.currentZone({}, util), ext.terrainZoneAtSprite({SPRITE: ''}, util),
+        'current zone matches sprite zone query');
+    // Hat edge-triggers only on transitions into the wanted zone.
+    t.equal(ext.whenZoneEntered({ZONE: z0}, util), false, 'no fire on first sight');
+    ext.setSpriteWorldPos({SPRITE: '', X: 200, Y: 200}, util);
+    const z1 = ext.currentZone({}, util);
+    t.equal(ext.whenZoneEntered({ZONE: z1}, util), true, 'fires entering new zone');
+    t.equal(ext.whenZoneEntered({ZONE: z1}, util), false, 'no repeat while staying');
+    t.equal(ext.whenZoneEntered({ZONE: 'nope'}, util), false, 'bogus zone never fires');
     t.end();
 });

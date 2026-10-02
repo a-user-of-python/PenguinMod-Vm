@@ -39,7 +39,17 @@ const EXACT_GEN_MAX = 2048; // sizes at/below this use the original algorithm
 const STRUCT_ICON_PX = 40;
 const STRUCT_VIEW_ZOOM_MAX = 320; // structures draw only when zoomed in past this
 
-const STRUCT_TYPES = ['house', 'tower', 'tree', 'boulder', 'well', 'windmill'];
+const STRUCT_TYPES = ['house', 'tower', 'tree', 'boulder', 'well', 'windmill', 'dungeon'];
+// Relative draw sizes: dungeons loom over houses, boulders are small.
+const STRUCT_SCALES = {
+    boulder: 0.7,
+    tree: 0.8,
+    well: 0.8,
+    house: 1.0,
+    windmill: 1.25,
+    tower: 1.5,
+    dungeon: 1.9
+};
 const STRUCT_SVGS = [
     // house
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">' +
@@ -80,7 +90,20 @@ const STRUCT_SVGS = [
     '<line x1="24" y1="16" x2="37" y2="16"/>' +
     '<line x1="24" y1="16" x2="24" y2="29"/>' +
     '<line x1="24" y1="16" x2="11" y2="16"/></g>' +
-    '<circle cx="24" cy="16" r="3.5" fill="#455a64"/></svg>'
+    '<circle cx="24" cy="16" r="3.5" fill="#455a64"/></svg>',
+    // dungeon (dark fortress gate, the largest structure)
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">' +
+    '<rect x="4" y="20" width="7" height="20" fill="#616161"/>' +
+    '<rect x="37" y="20" width="7" height="20" fill="#616161"/>' +
+    '<rect x="4" y="15" width="7" height="5" fill="#616161"/>' +
+    '<rect x="37" y="15" width="7" height="5" fill="#616161"/>' +
+    '<rect x="11" y="16" width="26" height="24" fill="#4e4e4e"/>' +
+    '<rect x="11" y="10" width="8" height="6" fill="#4e4e4e"/>' +
+    '<rect x="21" y="10" width="6" height="6" fill="#4e4e4e"/>' +
+    '<rect x="29" y="10" width="8" height="6" fill="#4e4e4e"/>' +
+    '<polygon points="19,40 19,28 24,21 29,28 29,40" fill="#141414"/>' +
+    '<rect x="15" y="20" width="4" height="6" fill="#212121"/>' +
+    '<rect x="29" y="20" width="4" height="6" fill="#212121"/></svg>'
 ];
 
 /**
@@ -387,6 +410,8 @@ class SBTerrain {
 
         // World-anchored sprites: target ids that move with the camera.
         this._anchors = new Set();
+        // Last seen zone per sprite id, for the "when I enter [zone]" hat.
+        this._zoneMemory = new Map();
         this._followName = null; // sprite name the camera follows, or null
 
         // Terrain shape tunables (internal; not blocks).
@@ -783,13 +808,17 @@ class SBTerrain {
             const img = new Image();
             img.onload = () => {
                 try {
+                    // Each structure rasterizes at its own size: a dungeon
+                    // looms over a house, a boulder is small.
+                    const px = Math.max(8, Math.round(
+                        STRUCT_ICON_PX * (STRUCT_SCALES[type] || 1)));
                     const c = document.createElement('canvas');
-                    c.width = STRUCT_ICON_PX;
-                    c.height = STRUCT_ICON_PX;
+                    c.width = px;
+                    c.height = px;
                     const g = c.getContext('2d');
-                    g.clearRect(0, 0, STRUCT_ICON_PX, STRUCT_ICON_PX);
-                    g.drawImage(img, 0, 0, STRUCT_ICON_PX, STRUCT_ICON_PX);
-                    const id = g.getImageData(0, 0, STRUCT_ICON_PX, STRUCT_ICON_PX);
+                    g.clearRect(0, 0, px, px);
+                    g.drawImage(img, 0, 0, px, px);
+                    const id = g.getImageData(0, 0, px, px);
                     resolve({type: type, data: id.data, w: id.width, h: id.height});
                 } catch (e) {
                     resolve(null);
@@ -901,7 +930,7 @@ class SBTerrain {
     }
 
     _pruneAnchors () {
-        if (this._anchors.size === 0) return;
+        if (this._anchors.size === 0 && this._zoneMemory.size === 0) return;
         for (const id of Array.from(this._anchors)) {
             let t = null;
             try {
@@ -910,6 +939,15 @@ class SBTerrain {
                 t = null;
             }
             if (!t || t.isStage || !t.sprite) this._anchors.delete(id);
+        }
+        for (const id of Array.from(this._zoneMemory.keys())) {
+            let t = null;
+            try {
+                t = this.runtime ? this.runtime.getTargetById(id) : null;
+            } catch (e) {
+                t = null;
+            }
+            if (!t || t.isStage || !t.sprite) this._zoneMemory.delete(id);
         }
     }
 
@@ -1138,6 +1176,27 @@ class SBTerrain {
                     }),
                     arguments: {
                         SPRITE: {type: ArgumentType.STRING, defaultValue: ''}
+                    }
+                },
+                {
+                    opcode: 'currentZone',
+                    blockType: BlockType.REPORTER,
+                    text: formatMessage({
+                        id: 'sbTerrain.currentZone',
+                        default: 'current zone',
+                        description: 'Terrain zone where I am right now; updates as I move between zones'
+                    })
+                },
+                {
+                    opcode: 'whenZoneEntered',
+                    blockType: BlockType.HAT,
+                    text: formatMessage({
+                        id: 'sbTerrain.whenZoneEntered',
+                        default: 'when I enter [ZONE]',
+                        description: 'Runs once when this sprite moves into the chosen terrain zone'
+                    }),
+                    arguments: {
+                        ZONE: {type: ArgumentType.STRING, menu: 'zone', defaultValue: 'grass'}
                     }
                 },
                 {
@@ -1555,7 +1614,7 @@ class SBTerrain {
                     text: formatMessage({
                         id: 'sbTerrain.structureAt',
                         default: 'structure at world x: [X] y: [Y]',
-                        description: 'Structure type at a world tile: house, tower, tree, boulder, well, windmill or empty'
+                        description: 'Structure type at a world tile: house, tower, tree, boulder, well, windmill, dungeon or empty'
                     }),
                     arguments: {
                         X: {type: ArgumentType.NUMBER, defaultValue: 0},
@@ -1627,6 +1686,11 @@ class SBTerrain {
                 terrainColor: {
                     acceptReporters: true,
                     items: ['ocean', 'beach', 'grass', 'mountain', 'snow']
+                },
+                zone: {
+                    acceptReporters: true,
+                    items: ['deep ocean', 'ocean', 'shallows', 'beach', 'grass',
+                        'mountain', 'snowy peak']
                 }
             }
         };
@@ -1797,6 +1861,59 @@ class SBTerrain {
         const wx = this._camX + (t.x / ppt);
         const wy = this._camY + (t.y / ppt);
         return this._zoneName(this._heightAt(wx, wy), wx, wy);
+    }
+
+    /**
+     * World position of a sprite target.
+     */
+    _spriteWorld (t) {
+        const ppt = this._pixelsPerTile();
+        return [this._camX + (t.x / ppt), this._camY + (t.y / ppt)];
+    }
+
+    /**
+     * The sprite this "I" refers to: the calling sprite, else the
+     * camera-followed sprite, else null (caller falls back to the camera).
+     */
+    _meSprite (util) {
+        let t = null;
+        try {
+            t = this._resolveSprite('', util);
+        } catch (e) {
+            t = null;
+        }
+        if (t) return t;
+        if (this._followName && this.runtime) {
+            try {
+                const f = this.runtime.getSpriteTargetByName(this._followName);
+                if (f && !f.isStage && f.sprite) return f;
+            } catch (e) {
+                // fall through to the camera
+            }
+        }
+        return null;
+    }
+
+    currentZone (args, util) {
+        if (!this._height) return 'ocean';
+        const t = this._meSprite(util);
+        const wx = t ? this._spriteWorld(t)[0] : this._camX;
+        const wy = t ? this._spriteWorld(t)[1] : this._camY;
+        return this._zoneName(this._heightAt(wx, wy), wx, wy);
+    }
+
+    whenZoneEntered (args, util) {
+        if (!this._height) return false;
+        const t = this._meSprite(util);
+        if (!t) return false;
+        const [wx, wy] = this._spriteWorld(t);
+        const zone = this._zoneName(this._heightAt(wx, wy), wx, wy);
+        const last = this._zoneMemory.get(t.id);
+        this._zoneMemory.set(t.id, zone);
+        if (this._zoneMemory.size > 500) this._zoneMemory.clear();
+        const want = String(args.ZONE);
+        // Edge-trigger: fire only on the transition into the wanted zone.
+        return last !== undefined && last !== zone && zone === want;
     }
 
     waterDepthAt (args) {

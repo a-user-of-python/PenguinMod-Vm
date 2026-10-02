@@ -81,13 +81,19 @@ forever
 - `camera follow [SPRITE]` / `stop camera follow` — optional follow mode.
 - `update anchored sprites` — call in a loop to apply camera-follow motion.
 - `terrain zone at [SPRITE]` — zone query locked to a moving sprite.
+- `current zone` — the zone where *this* sprite is right now; use it like a
+  variable in any block or custom function — it updates as you move.
+- `when I enter [zone]` — hat block that runs once each time this sprite
+  moves into the chosen zone (deep ocean, ocean, shallows, beach, grass,
+  mountain, snowy peak).
 
 **Structures**:
 - `generate structures with density [0-100]` — scatters named structures on
   grass using a second noise field compared against the land map.
 - `structure at world x, y` — `house`, `tower`, `tree`, `boulder`, `well`,
-  `windmill`, or empty. Six structure images are embedded in the extension
-  and drawn on the map.
+  `windmill`, `dungeon`, or empty. Seven structure images are embedded in the
+  extension and drawn on the map, each at its own size — a dungeon looms over
+  a house, a boulder is small.
 - `show/hide structures`, `structures visible?`.
 
 **Camera**:
